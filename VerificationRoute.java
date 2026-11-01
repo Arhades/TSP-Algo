@@ -202,6 +202,9 @@ public class VerificationRoute {
         start = System.nanoTime();
         List<Visit> routeB = dynamicPlan(base, eligible, budgetKm);
         double totalB = printRoute("B - Dynamic priority", base, routeB, System.nanoTime() - start);
+        System.out.println("\nFinal scores (cumulative uncertainty)");
+        System.out.printf("A (static):  %.4f%n", totalA);
+        System.out.printf("B (dynamic): %.4f%n", totalB);
         if (Math.abs(totalA - totalB) < 1e-9) {
             System.out.println("Tie: both routes collected the same cumulative uncertainty.");
         } else {
