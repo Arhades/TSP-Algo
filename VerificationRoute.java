@@ -7,11 +7,10 @@ import java.util.*;
 
 // Run from Project with Java 17 or later: java VerificationRoute.java
 public class VerificationRoute {
-    static final double BUDGET_KM = 500;
+    static final double DEFAULT_BUDGET_KM = 1000;
     static final double MAX_CONFIDENCE = 0.75; // Only scores below this qualify.
     static final double HIGH_UNCERTAINTY = 0.80;
     static final double POPULATION_WEIGHT = 0.70;
-    static final int SAMPLE_SIZE = 1000;
     static final LocalDate STUDY_DATE = LocalDate.of(2026, 11, 1);
 
     record Place(int id, String name, double lat, double lon, long population, LocalDate updated) {}
@@ -39,15 +38,15 @@ public class VerificationRoute {
         return Math.max(0, ChronoUnit.DAYS.between(p.updated, STUDY_DATE));
     }
 
-    static List<Candidate> score(List<Place> sample) {
+    static List<Candidate> score(List<Place> places) {
         long maxPopulation = 1;
         long maxAge = 1;
-        for (Place p : sample) {
+        for (Place p : places) {
             maxPopulation = Math.max(maxPopulation, p.population);
             maxAge = Math.max(maxAge, age(p));
         }
         List<Candidate> eligible = new ArrayList<>();
-        for (Place p : sample) {
+        for (Place p : places) {
             double population = Math.log1p(p.population) / Math.log1p(maxPopulation);
             double uncertainty = (double) age(p) / maxAge;
             double confidence = 1 - uncertainty;
@@ -66,11 +65,11 @@ public class VerificationRoute {
                 .thenComparingInt(choice -> choice.candidate.place.id));
     }
 
-    static boolean fits(double travelled, double nextLeg, Place next, Place base) {
-        return travelled + nextLeg + distance(next, base) <= BUDGET_KM;
+    static boolean fits(double travelled, double nextLeg, Place next, Place base, double budgetKm) {
+        return travelled + nextLeg + distance(next, base) <= budgetKm;
     }
 
-    static List<Visit> staticPlan(Place base, List<Candidate> eligible) {
+    static List<Visit> staticPlan(Place base, List<Candidate> eligible, double budgetKm) {
         PriorityQueue<Choice> queue = newQueue();
         for (Candidate c : eligible) {
             queue.add(new Choice(c, c.value, 0));
@@ -81,7 +80,7 @@ public class VerificationRoute {
         while (!queue.isEmpty()) {
             Candidate c = queue.remove().candidate;
             double leg = distance(current, c.place);
-            if (fits(travelled, leg, c.place, base)) {
+            if (fits(travelled, leg, c.place, base, budgetKm)) {
                 route.add(new Visit(c, leg));
                 travelled += leg;
                 current = c.place;
@@ -90,7 +89,7 @@ public class VerificationRoute {
         return route;
     }
 
-    static List<Visit> dynamicPlan(Place base, List<Candidate> eligible) {
+    static List<Visit> dynamicPlan(Place base, List<Candidate> eligible, double budgetKm) {
         List<Candidate> remaining = new ArrayList<>(eligible);
         List<Visit> route = new ArrayList<>();
         Place current = base;
@@ -100,7 +99,7 @@ public class VerificationRoute {
             PriorityQueue<Choice> queue = newQueue();
             for (Candidate c : remaining) {
                 double leg = distance(current, c.place);
-                if (fits(travelled, leg, c.place, base)) {
+                if (fits(travelled, leg, c.place, base, budgetKm)) {
                     queue.add(new Choice(c, c.value / (1 + leg), leg));
                 }
             }
@@ -137,6 +136,17 @@ public class VerificationRoute {
 
     public static void main(String[] args) throws Exception {
         int baseId = args.length == 0 ? 1735161 : Integer.parseInt(args[0]); // Kuala Lumpur
+        double budgetKm;
+        try {
+            budgetKm = args.length < 2 ? DEFAULT_BUDGET_KM : Double.parseDouble(args[1]);
+        } catch (NumberFormatException error) {
+            System.out.println("Budget must be a number in kilometres.");
+            return;
+        }
+        if (!Double.isFinite(budgetKm) || budgetKm < 0) {
+            System.out.println("Budget must be finite and non-negative.");
+            return;
+        }
         Path data = Path.of("src", "MY.txt");
         List<Place> places = new ArrayList<>();
         Place base = null;
@@ -144,26 +154,26 @@ public class VerificationRoute {
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] row = line.split("\t", -1);
-                if (Integer.parseInt(row[0]) == baseId) base = readPlace(row);
-                if (row[6].equals("P")) places.add(readPlace(row));
+                Place place = readPlace(row);
+                if (place.id == baseId) base = place;
+                places.add(place);
             }
         }
         if (base == null) {
             System.out.println("No record found for starting GeoNameID " + baseId);
             return;
         }
-        // Fixed seed keeps the experiment reproducible when comparing bases.
-        Collections.shuffle(places, new Random(201));
-        List<Place> sample = places.subList(0, Math.min(SAMPLE_SIZE, places.size()));
-        List<Candidate> eligible = score(sample);
-        eligible.removeIf(c -> c.place.id == baseId); // The depot earns no points.
-        System.out.printf("Base: %s [%d] | Sample: %d | Eligible: %d | Budget: %.0f km%n",
-                base.name, base.id, sample.size(), eligible.size(), BUDGET_KM);
+        List<Candidate> eligible = score(places);
+        Place depot = base;
+        // Even a direct trip to this point and back must fit the budget.
+        eligible.removeIf(c -> c.place.id == baseId || 2 * distance(depot, c.place) > budgetKm);
+        System.out.printf("Base: %s [%d] | Records checked: %d | Eligible within budget: %d | Budget: %s km%n",
+                base.name, base.id, places.size(), eligible.size(), budgetKm);
         long start = System.nanoTime();
-        List<Visit> routeA = staticPlan(base, eligible);
+        List<Visit> routeA = staticPlan(base, eligible, budgetKm);
         printRoute("A - Static priority", base, routeA, System.nanoTime() - start);
         start = System.nanoTime();
-        List<Visit> routeB = dynamicPlan(base, eligible);
+        List<Visit> routeB = dynamicPlan(base, eligible, budgetKm);
         printRoute("B - Dynamic priority", base, routeB, System.nanoTime() - start);
     }
 }
