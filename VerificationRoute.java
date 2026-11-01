@@ -9,12 +9,12 @@ import java.util.*;
 public class VerificationRoute {
     static final double DEFAULT_BUDGET_KM = 500;
     static final double MAX_CONFIDENCE = 0.75; // Only scores below this qualify.
-    static final double HIGH_UNCERTAINTY = 0.80;
+    static final double LOW_CONFIDENCE = 0.20;
     static final double POPULATION_WEIGHT = 0.70;
     static final LocalDate STUDY_DATE = LocalDate.of(2026, 11, 1);
 
     record Place(int id, String name, double lat, double lon, long population, LocalDate updated) {}
-    record Candidate(Place place, double uncertainty, double value) {}
+    record Candidate(Place place, double confidence) {}
     record Choice(Candidate candidate, double priority, double legKm) {}
     record Visit(Candidate candidate, double legKm) {}
 
@@ -48,12 +48,12 @@ public class VerificationRoute {
         List<Candidate> eligible = new ArrayList<>();
         for (Place p : places) {
             double population = Math.log1p(p.population) / Math.log1p(maxPopulation);
-            double uncertainty = (double) age(p) / maxAge;
-            double confidence = 1 - uncertainty;
+            double normalizedAge = (double) age(p) / maxAge;
+            // Simulated verification need: population measures impact, age measures staleness.
+            double confidence = 1 - (POPULATION_WEIGHT * population
+                    + (1 - POPULATION_WEIGHT) * normalizedAge);
             if (confidence < MAX_CONFIDENCE) {
-                double value = (POPULATION_WEIGHT * population
-                        + (1 - POPULATION_WEIGHT) * uncertainty);
-                eligible.add(new Candidate(p, uncertainty, value));
+                eligible.add(new Candidate(p, confidence));
             }
         }
         return eligible;
@@ -71,7 +71,7 @@ public class VerificationRoute {
 
     // Both algorithms use this rule. A measures from base, B from its current stop.
     static double priority(Candidate candidate, double distanceKm) {
-        return candidate.value / (1 + distanceKm);
+        return (1 - candidate.confidence) / (1 + distanceKm);
     }
 
     static List<Visit> staticPlan(Place base, List<Candidate> eligible, double budgetKm) {
@@ -142,23 +142,23 @@ public class VerificationRoute {
     static double printRoute(String title, Place base, List<Visit> route, long nanos) {
         System.out.println("\n" + title + "\nStart: " + base.name);
         double km = 0;
-        double cumulativeUncertainty = 0;
+        double routeScore = 0;
         int high = 0;
         Place last = base;
         for (Visit visit : route) {
             Candidate c = visit.candidate;
-            System.out.printf("  %s [%d]  +%.2f km  +%.4f uncertainty%n",
-                    c.place.name, c.place.id, visit.legKm, c.uncertainty);
+            System.out.printf("  %s [%d]  +%.2f km  confidence %.4f%n",
+                    c.place.name, c.place.id, visit.legKm, c.confidence);
             km += visit.legKm;
-            cumulativeUncertainty += c.uncertainty;
-            if (c.uncertainty >= HIGH_UNCERTAINTY) high++;
+            routeScore += 1 - c.confidence;
+            if (c.confidence <= LOW_CONFIDENCE) high++;
             last = c.place;
         }
         double back = distance(last, base);
         System.out.printf("Return: %s  +%.2f km%n", base.name, back);
-        System.out.printf("Total %.2f km | %.4f cumulative uncertainty | %d verified | %d high uncertainty | %.3f ms%n",
-                km + back, cumulativeUncertainty, route.size(), high, nanos / 1_000_000.0);
-        return cumulativeUncertainty;
+        System.out.printf("Total %.2f km | %.4f route score | %d verified | %d low confidence | %.3f ms%n",
+                km + back, routeScore, route.size(), high, nanos / 1_000_000.0);
+        return routeScore;
     }
 
     public static void main(String[] args) throws Exception {
@@ -202,14 +202,14 @@ public class VerificationRoute {
         start = System.nanoTime();
         List<Visit> routeB = dynamicPlan(base, eligible, budgetKm);
         double totalB = printRoute("B - Dynamic priority", base, routeB, System.nanoTime() - start);
-        System.out.println("\nFinal scores (cumulative uncertainty)");
+        System.out.println("\nFinal route scores");
         System.out.printf("A (static):  %.4f%n", totalA);
         System.out.printf("B (dynamic): %.4f%n", totalB);
         if (Math.abs(totalA - totalB) < 1e-9) {
-            System.out.println("Tie: both routes collected the same cumulative uncertainty.");
+            System.out.println("Tie: both routes collected the same route score.");
         } else {
             String winner = totalA > totalB ? "A (static)" : "B (dynamic)";
-            System.out.println("Winner by cumulative uncertainty: " + winner);
+            System.out.println("Winner by route score: " + winner);
         }
     }
 }
