@@ -121,16 +121,23 @@ public class VerificationRoute {
         Place current = base;
         double travelled = 0;
         while (!remaining.isEmpty()) {
-            // Moving changes every distance-based priority, so rebuild the queue.
-            PriorityQueue<Choice> queue = newQueue();
+            Choice best = null;
+            double highestPriority = -1;
             for (Candidate c : remaining) {
-                double leg = distance(current, c.place);
-                if (fits(travelled, leg, c.place, base, budgetKm)) {
-                    queue.add(new Choice(c, priority(c, leg), leg));
+                double dist = distance(current, c.place);
+                if (!fits(travelled, dist, c.place, base, budgetKm)) {
+                    continue;
                 }
+                double score = priority(c, dist);
+
+                if (score > highestPriority || 
+                    (score == highestPriority && c.place.id < best.candidate.place.id)) {
+                    highestPriority = priority(c, dist);
+                    best = new Choice(c, priority(c, dist), dist);
+                }
+                
             }
-            if (queue.isEmpty()) break;
-            Choice best = queue.remove();
+            if (best == null) break;
             route.add(new Visit(best.candidate, best.legKm));
             travelled += best.legKm;
             current = best.candidate.place;
