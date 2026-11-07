@@ -5,16 +5,16 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
-// Run from Project with Java 17 or later: java VerificationRoute.java
+// Run from TSP-Algo with Java 17 or later: java VerificationRoute.java
 public class VerificationRoute {
-    static final double DEFAULT_BUDGET_KM = 500;
-    static final double MAX_CONFIDENCE = 0.75; // Only scores below this qualify.
-    static final double LOW_CONFIDENCE = 0.20;
+    static final double DEFAULT_BUDGET_KM = 200;
+    static final double LOW_IMPACT = 0.20; // Only scores above this qualify.
+    static final double HIGH_IMPACT = 0.75;
     static final double POPULATION_WEIGHT = 0.70;
     static final LocalDate STUDY_DATE = LocalDate.of(2026, 11, 1);
 
     record Place(int id, String name, double lat, double lon, long population, LocalDate updated) {}
-    record Candidate(Place place, double confidence) {}
+    record Candidate(Place place, double impact) {}
     record Choice(Candidate candidate, double priority, double legKm) {}
     record Visit(Candidate candidate, double legKm) {}
 
@@ -50,10 +50,10 @@ public class VerificationRoute {
             double population = Math.log1p(p.population) / Math.log1p(maxPopulation);
             double normalizedAge = (double) age(p) / maxAge;
             // Simulated verification need: population measures impact, age measures staleness.
-            double confidence = 1 - (POPULATION_WEIGHT * population
-                    + (1 - POPULATION_WEIGHT) * normalizedAge);
-            if (confidence < MAX_CONFIDENCE) {
-                eligible.add(new Candidate(p, confidence));
+            double impact = POPULATION_WEIGHT * population
+                    + (1 - POPULATION_WEIGHT) * normalizedAge;
+            if (impact > LOW_IMPACT) {
+                eligible.add(new Candidate(p, impact));
             }
         }
         return eligible;
@@ -71,7 +71,7 @@ public class VerificationRoute {
 
     // Both algorithms use this rule. A measures from base, B from its current stop.
     static double priority(Candidate candidate, double distanceKm) {
-        return (1 - candidate.confidence) / (1 + distanceKm);
+        return (candidate.impact) / (1 + distanceKm);
     }
 
     static List<Visit> staticPlan(Place base, List<Candidate> eligible, double budgetKm) {
@@ -147,16 +147,16 @@ public class VerificationRoute {
         Place last = base;
         for (Visit visit : route) {
             Candidate c = visit.candidate;
-            System.out.printf("  %s [%d]  +%.2f km  confidence %.4f%n",
-                    c.place.name, c.place.id, visit.legKm, c.confidence);
+            System.out.printf("  %s [%d]  +%.2f km  impact %.4f%n",
+                    c.place.name, c.place.id, visit.legKm, c.impact);
             km += visit.legKm;
-            routeScore += 1 - c.confidence;
-            if (c.confidence <= LOW_CONFIDENCE) high++;
+            routeScore += c.impact;
+            if (c.impact >= HIGH_IMPACT) high++;
             last = c.place;
         }
         double back = distance(last, base);
         System.out.printf("Return: %s  +%.2f km%n", base.name, back);
-        System.out.printf("Total %.2f km | %.4f route score | %d verified | %d low confidence | %.3f ms%n",
+        System.out.printf("Total %.2f km | %.4f total impact | %d verified | %d high impact | %.3f ms%n",
                 km + back, routeScore, route.size(), high, nanos / 1_000_000.0);
         return routeScore;
     }
@@ -174,7 +174,8 @@ public class VerificationRoute {
             System.out.println("Budget must be finite and non-negative.");
             return;
         }
-        Path data = Path.of("src", "MY.txt");
+        // Optional third argument selects the preprocessed file.
+        Path data = args.length < 3 ? Path.of("src", "MY.txt") : Path.of(args[2]);
         List<Place> places = new ArrayList<>();
         Place base = null;
         try (BufferedReader reader = Files.newBufferedReader(data)) {
