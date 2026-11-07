@@ -2,11 +2,20 @@ import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 // Run from TSP-Algo: java data_preprocessing.java
 public class data_preprocessing {
+    // Keep the weight and study date equal to those in VerificationRoute.java.
+    // Rerun preprocessing whenever these settings change.
+    static final double LOW_IMPACT = 0.20;
+    static final double POPULATION_WEIGHT = 0.70;
+    static final LocalDate STUDY_DATE = LocalDate.of(2026, 11, 1);
+
     public static void main(String[] args) throws Exception {
         Path input = Path.of("src", "MY.txt");
         Path output = Path.of("src", "MY_cleaned.txt");
@@ -17,6 +26,7 @@ public class data_preprocessing {
         int duplicates = 0;
         int invalid = 0;
         int otherFeatures = 0;
+        int excludedPPLW = 0;
 
         try (BufferedReader reader = Files.newBufferedReader(input)) {
             String line;
@@ -31,6 +41,10 @@ public class data_preprocessing {
                 // Filter before deduplicating so only P records compete for a coordinate.
                 if (!fields[6].equals("P")) {
                     otherFeatures++;
+                    continue;
+                }
+                if (fields[7].equals("PPLW")) {
+                    excludedPPLW++;
                     continue;
                 }
                 int id = Integer.parseInt(fields[0]);
@@ -51,14 +65,49 @@ public class data_preprocessing {
             }
         }
 
-        // Write a separate file using the same 19-column format.
-        Files.write(output, records.values());
+        // Find the normalization limits BEFORE removing low-impact records.
+        long maxPopulation = 1;
+        long maxAge = 1;
+        for (String record : records.values()) {
+            String[] fields = record.split("\t", -1);
+            maxPopulation = Math.max(maxPopulation, population(fields));
+            maxAge = Math.max(maxAge, age(fields));
+        }
+
+        List<String> cleanedRecords = new ArrayList<>();
+        int lowImpact = 0;
+        for (String record : records.values()) {
+            String[] fields = record.split("\t", -1);
+            double populationScore = Math.log1p(population(fields)) / Math.log1p(maxPopulation);
+            double ageScore = (double) age(fields) / maxAge;
+            double impact = POPULATION_WEIGHT * populationScore
+                    + (1 - POPULATION_WEIGHT) * ageScore;
+            if (impact <= LOW_IMPACT) {
+                lowImpact++;
+                continue;
+            }
+            // Impact is only used for filtering. Save the original 19 fields.
+            cleanedRecords.add(record);
+        }
+        Files.write(output, cleanedRecords);
         System.out.println("Rows read: " + rows);
         System.out.println("Invalid rows removed: " + invalid);
         System.out.println("Non-P records removed: " + otherFeatures);
+        System.out.println("PPLW records removed: " + excludedPPLW);
         System.out.println("Repeated coordinate pairs removed: " + duplicates);
-        System.out.println("Records kept: " + records.size());
+        System.out.println("Records at or below impact " + LOW_IMPACT + " removed: " + lowImpact);
+        System.out.println("Records kept: " + cleanedRecords.size());
+        System.out.println("Output contains the original 19 columns.");
         System.out.println("Output: " + output);
+    }
+
+    static long population(String[] fields) {
+        return fields[14].isEmpty() ? 0 : Long.parseLong(fields[14]);
+    }
+
+    static long age(String[] fields) {
+        LocalDate updated = LocalDate.parse(fields[18]);
+        return Math.max(0, ChronoUnit.DAYS.between(updated, STUDY_DATE));
     }
 
     static String coordinateKey(String[] fields) {

@@ -7,9 +7,9 @@ import java.util.*;
 
 // Run from TSP-Algo with Java 17 or later: java VerificationRoute.java
 public class VerificationRoute {
-    static final double DEFAULT_BUDGET_KM = 100;
-    static final double LOW_IMPACT = 0.20; // Only scores above this qualify.
-    static final double HIGH_IMPACT = 0.75;
+    static final double DEFAULT_BUDGET_KM = 200;
+    // Keep these settings equal to those in data_preprocessing.java.
+    // Rerun preprocessing if the weight or study date changes.
     static final double POPULATION_WEIGHT = 0.70;
     static final LocalDate STUDY_DATE = LocalDate.of(2026, 11, 1);
 
@@ -52,9 +52,8 @@ public class VerificationRoute {
             // Simulated verification need: population measures impact, age measures staleness.
             double impact = POPULATION_WEIGHT * population
                     + (1 - POPULATION_WEIGHT) * normalizedAge;
-            if (impact > LOW_IMPACT) {
-                eligible.add(new Candidate(p, impact));
-            }
+            // Preprocessing has already removed low-impact records.
+            eligible.add(new Candidate(p, impact));
         }
         return eligible;
     }
@@ -181,7 +180,6 @@ public class VerificationRoute {
         System.out.println("\n" + title + "\nStart: " + base.name);
         double km = 0;
         double routeScore = 0;
-        int high = 0;
         Place last = base;
         for (Visit visit : route) {
             Candidate c = visit.candidate;
@@ -189,13 +187,12 @@ public class VerificationRoute {
                     c.place.name, c.place.id, visit.legKm, c.impact);
             km += visit.legKm;
             routeScore += c.impact;
-            if (c.impact >= HIGH_IMPACT) high++;
             last = c.place;
         }
         double back = distance(last, base);
         System.out.printf("Return: %s  +%.2f km%n", base.name, back);
-        System.out.printf("Total %.2f km | %.4f total impact | %d verified | %d high impact | %.3f ms%n",
-                km + back, routeScore, route.size(), high, nanos / 1_000_000.0);
+        System.out.printf("Total %.2f km | %.4f total impact | %d verified | %.3f ms%n",
+                km + back, routeScore, route.size(), nanos / 1_000_000.0);
         return routeScore;
     }
 
@@ -220,6 +217,9 @@ public class VerificationRoute {
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] row = line.split("\t", -1);
+                if (row.length != 19) {
+                    throw new IllegalArgumentException("Expected 19 columns. Rerun data_preprocessing.java.");
+                }
                 Place place = readPlace(row);
                 if (place.id == baseId) base = place;
                 places.add(place);
@@ -229,6 +229,7 @@ public class VerificationRoute {
             System.out.println("No record found for starting GeoNameID " + baseId);
             return;
         }
+        // Calculate impact for ranking and totals, without applying a threshold again.
         List<Candidate> eligible = score(places);
         Place depot = base;
         // Even a direct trip to this point and back must fit the budget.
