@@ -16,6 +16,7 @@ public class data_preprocessing {
         int rows = 0;
         int duplicates = 0;
         int invalid = 0;
+        int otherFeatures = 0;
 
         try (BufferedReader reader = Files.newBufferedReader(input)) {
             String line;
@@ -24,6 +25,12 @@ public class data_preprocessing {
                 String[] fields = line.split("\t", -1);
                 if (!valid(fields)) {
                     invalid++;
+                    continue;
+                }
+                // P means populated places, including cities, towns and villages.
+                // Filter before deduplicating so only P records compete for a coordinate.
+                if (!fields[6].equals("P")) {
+                    otherFeatures++;
                     continue;
                 }
                 int id = Integer.parseInt(fields[0]);
@@ -48,6 +55,7 @@ public class data_preprocessing {
         Files.write(output, records.values());
         System.out.println("Rows read: " + rows);
         System.out.println("Invalid rows removed: " + invalid);
+        System.out.println("Non-P records removed: " + otherFeatures);
         System.out.println("Repeated coordinate pairs removed: " + duplicates);
         System.out.println("Records kept: " + records.size());
         System.out.println("Output: " + output);

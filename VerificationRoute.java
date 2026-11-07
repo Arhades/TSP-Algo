@@ -7,7 +7,7 @@ import java.util.*;
 
 // Run from TSP-Algo with Java 17 or later: java VerificationRoute.java
 public class VerificationRoute {
-    static final double DEFAULT_BUDGET_KM = 200;
+    static final double DEFAULT_BUDGET_KM = 100;
     static final double LOW_IMPACT = 0.20; // Only scores above this qualify.
     static final double HIGH_IMPACT = 0.75;
     static final double POPULATION_WEIGHT = 0.70;
@@ -146,6 +146,37 @@ public class VerificationRoute {
         return route;
     }
 
+    // Nearest-neighbor baseline (k = 1): choose by distance only.
+    static List<Visit> nearestNeighborPlan(Place base, List<Candidate> eligible, double budgetKm) {
+        List<Candidate> remaining = new ArrayList<>(eligible);
+        List<Visit> route = new ArrayList<>();
+        Place current = base;
+        double travelled = 0;
+
+        while (!remaining.isEmpty()) {
+            Candidate nearest = null;
+            double shortestDistance = Double.POSITIVE_INFINITY;
+            for (Candidate candidate : remaining) {
+                double leg = distance(current, candidate.place);
+                if (!fits(travelled, leg, candidate.place, base, budgetKm)) {
+                    continue;
+                }
+                // Break distance ties using the smaller GeoNameID.
+                if (nearest == null || leg < shortestDistance
+                        || (leg == shortestDistance && candidate.place.id < nearest.place.id)) {
+                    nearest = candidate;
+                    shortestDistance = leg;
+                }
+            }
+            if (nearest == null) break;
+            route.add(new Visit(nearest, shortestDistance));
+            travelled += shortestDistance;
+            current = nearest.place;
+            remaining.remove(nearest);
+        }
+        return route;
+    }
+
     static double printRoute(String title, Place base, List<Visit> route, long nanos) {
         System.out.println("\n" + title + "\nStart: " + base.name);
         double km = 0;
@@ -181,8 +212,8 @@ public class VerificationRoute {
             System.out.println("Budget must be finite and non-negative.");
             return;
         }
-        // Optional third argument selects the preprocessed file.
-        Path data = args.length < 3 ? Path.of("src", "MY.txt") : Path.of(args[2]);
+        // Optional third argument overrides the default cleaned dataset.
+        Path data = args.length < 3 ? Path.of("src", "MY_cleaned.txt") : Path.of(args[2]);
         List<Place> places = new ArrayList<>();
         Place base = null;
         try (BufferedReader reader = Files.newBufferedReader(data)) {
@@ -210,14 +241,23 @@ public class VerificationRoute {
         start = System.nanoTime();
         List<Visit> routeB = dynamicPlan(base, eligible, budgetKm);
         double totalB = printRoute("B - Dynamic priority", base, routeB, System.nanoTime() - start);
+        start = System.nanoTime();
+        List<Visit> routeNN = nearestNeighborPlan(base, eligible, budgetKm);
+        double totalNN = printRoute("NN - Nearest-neighbor baseline (k = 1)",
+                base, routeNN, System.nanoTime() - start);
         System.out.println("\nFinal route scores");
         System.out.printf("A (static):  %.4f%n", totalA);
         System.out.printf("B (dynamic): %.4f%n", totalB);
-        if (Math.abs(totalA - totalB) < 1e-9) {
-            System.out.println("Tie: both routes collected the same route score.");
+        System.out.printf("NN baseline: %.4f%n", totalNN);
+        double bestScore = Math.max(totalA, Math.max(totalB, totalNN));
+        List<String> winners = new ArrayList<>();
+        if (Math.abs(totalA - bestScore) < 1e-9) winners.add("A (static)");
+        if (Math.abs(totalB - bestScore) < 1e-9) winners.add("B (dynamic)");
+        if (Math.abs(totalNN - bestScore) < 1e-9) winners.add("NN baseline");
+        if (winners.size() == 1) {
+            System.out.println("Winner by route score: " + winners.get(0));
         } else {
-            String winner = totalA > totalB ? "A (static)" : "B (dynamic)";
-            System.out.println("Winner by route score: " + winner);
+            System.out.println("Tie for highest route score: " + String.join(", ", winners));
         }
     }
 }
